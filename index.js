@@ -1,6 +1,6 @@
-const qs = require('querystring');
 const express = require('express');
 const axios = require('axios');
+const qs = require('querystring');
 const app = express();
 
 const GHL_WEBHOOK_URL = process.env.GHL_WEBHOOK_URL;
@@ -18,6 +18,7 @@ app.get('/api/callback', async (req, res) => {
   try {
     console.log('➡️ Received code:', code);
 
+    // STEP 1 — Token exchange
     const tokenResponse = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
       qs.stringify({
@@ -38,16 +39,21 @@ app.get('/api/callback', async (req, res) => {
 
     console.log('✅ Tokens obtained:', { access_token, refresh_token });
 
-    const locationsResponse = await axios.get('https://services.leadconnectorhq.com/locations/', {
-      headers: {
-        Authorization: `Bearer ${access_token}`
+    // STEP 2 — Fetch all locations using v1 endpoint
+    const locationsResponse = await axios.get(
+      'https://services.leadconnectorhq.com/locations/',
+      {
+        headers: {
+          Authorization: `Bearer ${access_token}`
+        }
       }
-    });
+    );
 
     const locations = locationsResponse.data.locations || [];
 
     console.log('✅ Locations fetched:', locations);
 
+    // STEP 3 — Send everything to inbound webhook
     await axios.post(GHL_WEBHOOK_URL, {
       code,
       access_token,
