@@ -8,13 +8,14 @@ const CLIENT_SECRET = process.env.GHL_CLIENT_SECRET;
 const REDIRECT_URI = process.env.REDIRECT_URI;
 
 app.get('/api/callback', async (req, res) => {
-  const { code, locationId } = req.query;
+  const { code } = req.query;
 
-  if (!code || !locationId) {
-    return res.status(400).send('Missing code or locationId');
+  if (!code) {
+    return res.status(400).send('❌ Missing code in query params');
   }
 
   try {
+    // Paso 1 → Intercambiar el code por tokens
     const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
@@ -25,17 +26,31 @@ app.get('/api/callback', async (req, res) => {
 
     const { access_token, refresh_token } = tokenResponse.data;
 
-    await axios.post(GHL_WEBHOOK_URL, {
-      code,
-      locationId,
-      access_token,
-      refresh_token
+    console.log('✅ Tokens obtained:', { access_token, refresh_token });
+
+    // Paso 2 → Obtener las locations a las que el token tiene acceso
+    const locationsResponse = await axios.get('https://services.leadconnectorhq.com/v1/locations/', {
+      headers: {
+        Authorization: `Bearer ${access_token}`
+      }
     });
 
-    res.send('✅ Authorization complete. You may close this window.');
+    const locations = locationsResponse.data.locations || [];
+
+    console.log('✅ Locations fetched:', locations);
+
+    // Paso 3 → Enviar todo al webhook de GHL
+    await axios.post(GHL_WEBHOOK_URL, {
+      code,
+      access_token,
+      refresh_token,
+      locations
+    });
+
+    res.send('✅ Authorization complete! Data sent to inbound webhook. You may close this window.');
   } catch (err) {
     console.error(err.response?.data || err.message);
-    res.status(500).send('❌ Something went wrong');
+    res.status(500).send('❌ Error during token exchange or webhook call.');
   }
 });
 
