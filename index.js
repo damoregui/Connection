@@ -1,3 +1,4 @@
+const qs = require('querystring');
 const express = require('express');
 const axios = require('axios');
 const app = express();
@@ -15,20 +16,28 @@ app.get('/api/callback', async (req, res) => {
   }
 
   try {
-    // Paso 1 → Intercambiar el code por tokens
-    const tokenResponse = await axios.post('https://services.leadconnectorhq.com/oauth/token', {
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: REDIRECT_URI
-    });
+    console.log('➡️ Received code:', code);
+
+    const tokenResponse = await axios.post(
+      'https://services.leadconnectorhq.com/oauth/token',
+      qs.stringify({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: REDIRECT_URI
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
 
     const { access_token, refresh_token } = tokenResponse.data;
 
     console.log('✅ Tokens obtained:', { access_token, refresh_token });
 
-    // Paso 2 → Obtener las locations a las que el token tiene acceso
     const locationsResponse = await axios.get('https://services.leadconnectorhq.com/v1/locations/', {
       headers: {
         Authorization: `Bearer ${access_token}`
@@ -39,7 +48,6 @@ app.get('/api/callback', async (req, res) => {
 
     console.log('✅ Locations fetched:', locations);
 
-    // Paso 3 → Enviar todo al webhook de GHL
     await axios.post(GHL_WEBHOOK_URL, {
       code,
       access_token,
@@ -50,11 +58,11 @@ app.get('/api/callback', async (req, res) => {
     res.send('✅ Authorization complete! Data sent to inbound webhook. You may close this window.');
   } catch (err) {
     if (err.response) {
-        console.error('❌ ERROR STATUS:', err.response.status);
-        console.error('❌ ERROR DATA:', err.response.data);
-        } else {
-        console.error('❌ ERROR MESSAGE:', err.message);
-        }
+      console.error('❌ ERROR STATUS:', err.response.status);
+      console.error('❌ ERROR DATA:', err.response.data);
+    } else {
+      console.error('❌ ERROR MESSAGE:', err.message);
+    }
 
     res.status(500).send('❌ Error during token exchange or webhook call. Check logs for details.');
   }
