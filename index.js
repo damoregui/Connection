@@ -38,7 +38,7 @@ app.get('/api/callback', async (req, res) => {
 
     console.log('✅ Tokens obtained:', { access_token, refresh_token });
 
-    const locationsResponse = await axios.get('https://services.leadconnectorhq.com/v1/locations/', {
+    const locationsResponse = await axios.get('https://services.leadconnectorhq.com/locations/', {
       headers: {
         Authorization: `Bearer ${access_token}`
       }
