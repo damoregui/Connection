@@ -41,7 +41,7 @@ app.get('/api/callback', async (req, res) => {
 
     // STEP 2 — Fetch all locations using v1 endpoint
     const locationsResponse = await axios.get(
-      'https://services.leadconnectorhq.com/locations/',
+      'https://services.leadconnectorhq.com/v1/locations/',
       {
         headers: {
           Authorization: `Bearer ${access_token}`
