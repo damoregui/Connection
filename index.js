@@ -49,8 +49,14 @@ app.get('/api/callback', async (req, res) => {
 
     res.send('✅ Authorization complete! Data sent to inbound webhook. You may close this window.');
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).send('❌ Error during token exchange or webhook call.');
+    if (err.response) {
+        console.error('❌ ERROR STATUS:', err.response.status);
+        console.error('❌ ERROR DATA:', err.response.data);
+        } else {
+        console.error('❌ ERROR MESSAGE:', err.message);
+        }
+
+    res.status(500).send('❌ Error during token exchange or webhook call. Check logs for details.');
   }
 });
 
