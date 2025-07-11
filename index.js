@@ -18,7 +18,7 @@ app.get('/api/callback', async (req, res) => {
   const { code } = req.query;
 
   if (!code) {
-    return res.status(400).send('❌ Missing code in query params');
+    return res.status(400).send('An error occurred, please contact support.');
   }
 
   console.log('➡️ Received code:', code);
@@ -28,7 +28,8 @@ app.get('/api/callback', async (req, res) => {
   if (TEMP_STORAGE.locationId) {
     await processOAuthFlow(res);
   } else {
-    res.send('✅ Code saved. Waiting for locationId...');
+    // No devolver texto visible al usuario
+    res.sendStatus(200);
   }
 });
 
@@ -45,10 +46,12 @@ app.post('/api/ghl-webhook', async (req, res) => {
     if (TEMP_STORAGE.code) {
       await processOAuthFlow(res);
     } else {
-      res.send('✅ LocationId saved. Waiting for code...');
+      // No devolver texto visible al usuario
+      res.sendStatus(200);
     }
   } else {
-    res.send('✅ Webhook received. No action needed.');
+    // Para otros tipos de webhook que no nos interesan
+    res.sendStatus(200);
   }
 });
 
@@ -91,10 +94,14 @@ async function processOAuthFlow(res) {
     TEMP_STORAGE.code = null;
     TEMP_STORAGE.locationId = null;
 
+    // Redirigir al Thank You page
     res.redirect('https://app.gohighlevel.com/v2/preview/ScbPusBtq4O63sGgKeYr?notrack=true');
+
   } catch (err) {
     console.error('❌ ERROR:', err.response?.data || err.message);
-    res.status(500).send('❌ Error during token exchange or webhook call.');
+    res
+      .status(500)
+      .send('An error occurred, please contact support.');
   }
 }
 
