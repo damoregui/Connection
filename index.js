@@ -91,7 +91,7 @@ async function processOAuthFlow(res) {
     TEMP_STORAGE.code = null;
     TEMP_STORAGE.locationId = null;
 
-    res.send('✅ All data processed and sent to inbound webhook!');
+    res.redirect('https://app.gohighlevel.com/v2/preview/ScbPusBtq4O63sGgKeYr?notrack=true');
   } catch (err) {
     console.error('❌ ERROR:', err.response?.data || err.message);
     res.status(500).send('❌ Error during token exchange or webhook call.');
