@@ -8,7 +8,10 @@ const { MongoClient } = require('mongodb');
 const app = express();
 app.use(express.json());
 
-// ⚠️ TEMPORARY STORAGE → en producción usar algo mejor (Redis, etc.)
+/* =========================
+   TEMPORARY STORAGE
+========================= */
+
 const TEMP_STORAGE = {
   code: null,
   locationId: null
@@ -18,16 +21,26 @@ const TEMP_STORAGE = {
    MongoDB Setup
 ========================= */
 
-const mongoClient = new MongoClient(process.env.MONGODB_URI);
+const mongoClient = new MongoClient(process.env.MONGODB_URI, {
+  ssl: true,
+  serverSelectionTimeoutMS: 5000
+});
+
 let accountsCollection;
 
 async function connectMongo() {
-  await mongoClient.connect();
-  const db = mongoClient.db(process.env.MONGODB_DBNAME || 'ghlApp');
-  accountsCollection = db.collection('accounts');
-  console.log('✅ MongoDB connected.');
+  try {
+    await mongoClient.connect();
+    console.log('✅ MongoDB connected.');
+
+    const db = mongoClient.db(process.env.MONGODB_DBNAME || 'ghlApp');
+    accountsCollection = db.collection('accounts');
+    console.log('✅ accountsCollection ready.');
+  } catch (err) {
+    console.error('❌ ERROR connecting to MongoDB:', err?.message, err?.stack);
+    process.exit(1);
+  }
 }
-connectMongo().catch(console.error);
 
 /* =========================
    Crypto Utils
@@ -59,34 +72,37 @@ function decrypt(encrypted) {
    Routes
 ========================= */
 
-// CALLBACK → Recibe el code desde el redirect URI
+// CALLBACK → recibe el code
 app.get('/api/callback', async (req, res) => {
+  console.log('➡️ HIT /api/callback');
+  console.log('Query params:', req.query);
+
   const { code } = req.query;
-
-  if (!code) {
-    return res.status(400).send('An error occurred, please contact support.');
-  }
-
-  console.log('➡️ Received code:', code);
 
   TEMP_STORAGE.code = code;
 
-  if (TEMP_STORAGE.locationId) {
+  console.log('TEMP_STORAGE now:', TEMP_STORAGE);
+
+  if (TEMP_STORAGE.code && TEMP_STORAGE.locationId) {
     await processOAuthFlow(res);
   } else {
     res.sendStatus(200);
   }
 });
 
-// WEBHOOK → Recibe el locationId desde el webhook de instalación
+// WEBHOOK → recibe locationId
 app.post('/api/ghl-webhook', async (req, res) => {
+  console.log('➡️ HIT /api/ghl-webhook');
+  console.log('Webhook body:', req.body);
+
   const body = req.body;
 
   if (body.type === 'INSTALL') {
     const locationId = body.locationId;
-    console.log('➡️ Webhook received. LocationId:', locationId);
+    console.log('➡️ Webhook INSTALL. LocationId:', locationId);
 
     TEMP_STORAGE.locationId = locationId;
+    console.log('TEMP_STORAGE now:', TEMP_STORAGE);
 
     if (TEMP_STORAGE.code) {
       await processOAuthFlow(res);
@@ -94,6 +110,7 @@ app.post('/api/ghl-webhook', async (req, res) => {
       res.sendStatus(200);
     }
   } else {
+    console.log('ℹ️ Webhook ignored. Type:', body.type);
     res.sendStatus(200);
   }
 });
@@ -103,8 +120,11 @@ app.post('/api/ghl-webhook', async (req, res) => {
 ========================= */
 
 async function processOAuthFlow(res) {
+  console.log('➡️ Entrando en processOAuthFlow');
+  console.log('TEMP_STORAGE antes de token exchange:', TEMP_STORAGE);
+
   try {
-    // 1. Token exchange
+    console.log('➡️ Haciendo token exchange...');
     const tokenResponse = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
       qs.stringify({
@@ -123,12 +143,14 @@ async function processOAuthFlow(res) {
 
     const { access_token, refresh_token } = tokenResponse.data;
 
-    console.log('✅ Tokens obtained:', {
-      access_token,
-      refresh_token
+    console.log('✅ Token exchange OK.');
+    console.log('Tokens received:', {
+      access_token: access_token?.substring(0, 10) + '...',
+      refresh_token: refresh_token?.substring(0, 10) + '...'
     });
 
-    // 2. Fetch custom fields from GHL
+    // Fetch custom fields
+    console.log('➡️ Fetching custom fields...');
     const fieldsResponse = await axios.get(
       `https://services.leadconnectorhq.com/locations/${TEMP_STORAGE.locationId}/customFields`,
       {
@@ -141,19 +163,26 @@ async function processOAuthFlow(res) {
 
     const fieldsData = fieldsResponse.data;
 
-    // build mapping { fieldName: fieldId }
+    console.log('✅ Fields fetched:', fieldsData?.customFields?.length || 0);
+
     const fieldMappings = {};
-    fieldsData.customFields.forEach(field => {
+    fieldsData?.customFields?.forEach(field => {
       fieldMappings[field.name] = field.id;
     });
 
-    console.log('✅ Custom fields fetched:', fieldMappings);
+    console.log('➡️ Field mappings:', fieldMappings);
 
-    // 3. Save everything into MongoDB
+    // Save to MongoDB
+    console.log('➡️ Guardando en MongoDB...');
     const encryptedAccessToken = encrypt(access_token);
     const encryptedRefreshToken = encrypt(refresh_token);
 
-    await accountsCollection.updateOne(
+    if (!accountsCollection) {
+      console.error('❌ accountsCollection está undefined.');
+      return res.status(500).send('MongoDB connection not initialized.');
+    }
+
+    const updateResult = await accountsCollection.updateOne(
       { locationId: TEMP_STORAGE.locationId },
       {
         $set: {
@@ -170,27 +199,37 @@ async function processOAuthFlow(res) {
       { upsert: true }
     );
 
-    console.log('✅ Account stored in MongoDB.');
+    console.log('✅ MongoDB update result:', updateResult);
 
-    // OPTIONAL → Notify your inbound webhook if needed
+    // Opcional → notificar webhook interno
+    console.log('➡️ Enviando datos a GHL_WEBHOOK_URL...');
     await axios.post(process.env.GHL_WEBHOOK_URL, {
       locationId: TEMP_STORAGE.locationId,
       access_token,
       refresh_token
     });
-
-    console.log('✅ Data sent to inbound webhook.');
+    console.log('✅ Data enviada a inbound webhook.');
 
     TEMP_STORAGE.code = null;
     TEMP_STORAGE.locationId = null;
 
     res.redirect('https://app.gohighlevel.com/v2/preview/ScbPusBtq4O63sGgKeYr?notrack=true');
+
   } catch (err) {
-    console.error('❌ ERROR:', err.response?.data || err.message);
-    res
-      .status(500)
-      .send('An error occurred, please contact support.');
+    console.error('❌ ERROR en processOAuthFlow:', err?.response?.data || err.message, err.stack);
+    res.status(500).send('An error occurred, please contact support.');
   }
 }
+
+/* =========================
+   Start Server
+========================= */
+
+connectMongo().then(() => {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
+});
 
 module.exports = app;
