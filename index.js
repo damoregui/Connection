@@ -1,17 +1,63 @@
+require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const qs = require('querystring');
+const crypto = require('crypto');
+const { MongoClient } = require('mongodb');
 
 const app = express();
-
-// Middleware para leer JSON en body
 app.use(express.json());
 
-// ⚠️ TEMPORARY STORAGE → En producción usar Redis u otro storage persistente
+// ⚠️ TEMPORARY STORAGE → en producción usar algo mejor (Redis, etc.)
 const TEMP_STORAGE = {
   code: null,
   locationId: null
 };
+
+/* =========================
+   MongoDB Setup
+========================= */
+
+const mongoClient = new MongoClient(process.env.MONGODB_URI);
+let accountsCollection;
+
+async function connectMongo() {
+  await mongoClient.connect();
+  const db = mongoClient.db(process.env.MONGODB_DBNAME || 'ghlApp');
+  accountsCollection = db.collection('accounts');
+  console.log('✅ MongoDB connected.');
+}
+connectMongo().catch(console.error);
+
+/* =========================
+   Crypto Utils
+========================= */
+
+const ENCRYPT_SECRET = process.env.ENCRYPT_SECRET || 'super-secret-password';
+const SALT = 'my-salt';
+
+function encrypt(text) {
+  const key = crypto.scryptSync(ENCRYPT_SECRET, SALT, 32);
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return iv.toString('hex') + ':' + encrypted;
+}
+
+function decrypt(encrypted) {
+  const [ivHex, encryptedData] = encrypted.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const key = crypto.scryptSync(ENCRYPT_SECRET, SALT, 32);
+  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+  let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+
+/* =========================
+   Routes
+========================= */
 
 // CALLBACK → Recibe el code desde el redirect URI
 app.get('/api/callback', async (req, res) => {
@@ -28,7 +74,6 @@ app.get('/api/callback', async (req, res) => {
   if (TEMP_STORAGE.locationId) {
     await processOAuthFlow(res);
   } else {
-    // No devolver texto visible al usuario
     res.sendStatus(200);
   }
 });
@@ -46,18 +91,20 @@ app.post('/api/ghl-webhook', async (req, res) => {
     if (TEMP_STORAGE.code) {
       await processOAuthFlow(res);
     } else {
-      // No devolver texto visible al usuario
       res.sendStatus(200);
     }
   } else {
-    // Para otros tipos de webhook que no nos interesan
     res.sendStatus(200);
   }
 });
 
-// Función que realiza el token exchange y envía los datos al inbound webhook
+/* =========================
+   OAuth + MongoDB Logic
+========================= */
+
 async function processOAuthFlow(res) {
   try {
+    // 1. Token exchange
     const tokenResponse = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
       qs.stringify({
@@ -81,7 +128,50 @@ async function processOAuthFlow(res) {
       refresh_token
     });
 
-    // Enviar datos al inbound webhook
+    // 2. Fetch custom fields from GHL
+    const fieldsResponse = await axios.get(
+      `https://services.leadconnectorhq.com/locations/${TEMP_STORAGE.locationId}/customFields`,
+      {
+        headers: {
+          Authorization: `Bearer ${access_token}`
+        }
+      }
+    );
+
+    const fieldsData = fieldsResponse.data;
+
+    // build mapping { fieldName: fieldId }
+    const fieldMappings = {};
+    fieldsData.customFields.forEach(field => {
+      fieldMappings[field.name] = field.id;
+    });
+
+    console.log('✅ Custom fields fetched:', fieldMappings);
+
+    // 3. Save everything into MongoDB
+    const encryptedAccessToken = encrypt(access_token);
+    const encryptedRefreshToken = encrypt(refresh_token);
+
+    await accountsCollection.updateOne(
+      { locationId: TEMP_STORAGE.locationId },
+      {
+        $set: {
+          locationId: TEMP_STORAGE.locationId,
+          accessTokenEncrypted: encryptedAccessToken,
+          refreshTokenEncrypted: encryptedRefreshToken,
+          fieldMappings,
+          updatedAt: new Date()
+        },
+        $setOnInsert: {
+          createdAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+
+    console.log('✅ Account stored in MongoDB.');
+
+    // OPTIONAL → Notify your inbound webhook if needed
     await axios.post(process.env.GHL_WEBHOOK_URL, {
       locationId: TEMP_STORAGE.locationId,
       access_token,
@@ -90,13 +180,10 @@ async function processOAuthFlow(res) {
 
     console.log('✅ Data sent to inbound webhook.');
 
-    // Limpiar almacenamiento temporal
     TEMP_STORAGE.code = null;
     TEMP_STORAGE.locationId = null;
 
-    // Redirigir al Thank You page
     res.redirect('https://app.gohighlevel.com/v2/preview/ScbPusBtq4O63sGgKeYr?notrack=true');
-
   } catch (err) {
     console.error('❌ ERROR:', err.response?.data || err.message);
     res
