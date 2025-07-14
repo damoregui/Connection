@@ -133,7 +133,8 @@ async function processOAuthFlow(res) {
       `https://services.leadconnectorhq.com/locations/${TEMP_STORAGE.locationId}/customFields`,
       {
         headers: {
-          Authorization: `Bearer ${access_token}`
+          Authorization: `Bearer ${access_token}`,
+          Version: '2021-07-28'
         }
       }
     );
