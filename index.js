@@ -149,10 +149,10 @@ async function processOAuthFlow(res) {
       refresh_token: refresh_token?.substring(0, 10) + '...'
     });
 
-    // Fetch custom fields
-    console.log('➡️ Fetching custom fields...');
+    // Fetch custom values
+    console.log('➡️ Fetching custom values...');
     const fieldsResponse = await axios.get(
-      `https://services.leadconnectorhq.com/locations/${TEMP_STORAGE.locationId}/customFields`,
+      `https://services.leadconnectorhq.com/locations/${TEMP_STORAGE.locationId}/customValues`,
       {
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -163,14 +163,14 @@ async function processOAuthFlow(res) {
 
     const fieldsData = fieldsResponse.data;
 
-    console.log('✅ Fields fetched:', fieldsData?.customFields?.length || 0);
+    console.log('✅ Custom values fetched:', fieldsData?.customValues?.length || 0);
 
     const fieldMappings = {};
-    fieldsData?.customFields?.forEach(field => {
+    fieldsData?.customValues?.forEach(field => {
       fieldMappings[field.fieldKey] = field.id;
     });
 
-    console.log('➡️ Field mappings:', fieldMappings);
+    console.log('➡️ Custom value mappings:', fieldMappings);
 
     // Save to MongoDB
     console.log('➡️ Guardando en MongoDB...');
