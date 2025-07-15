@@ -167,7 +167,7 @@ async function processOAuthFlow(res) {
 
     const fieldMappings = {};
     fieldsData?.customFields?.forEach(field => {
-      fieldMappings[field.name] = field.id;
+      fieldMappings[field.fieldKey] = field.id;
     });
 
     console.log('➡️ Field mappings:', fieldMappings);
