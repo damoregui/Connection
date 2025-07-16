@@ -1,3 +1,5 @@
+// /api/submit-ghl-fields.js
+
 import { MongoClient } from "mongodb";
 import crypto from "crypto";
 import axios from "axios";
@@ -47,28 +49,29 @@ function camelToSnake(str) {
 }
 
 export default async function handler(req, res) {
-  // ✅ CORS abierto a cualquier origen
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
-  if (req.method === "OPTIONS") {
-    return res
-      .writeHead(200, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      })
-      .end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  await connectMongo();
-
   try {
+    // ✅ CORS HEADERS
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    if (req.method === "OPTIONS") {
+      return res
+        .status(200)
+        .set({
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        })
+        .end();
+    }
+
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    await connectMongo();
+
     const data = req.body;
     console.log("➡️ HIT /api/submit-ghl-fields");
     console.log("[API] Received payload:", data);
@@ -89,6 +92,7 @@ export default async function handler(req, res) {
     let accessToken = decrypt(account.accessTokenEncrypted);
     const refreshToken = decrypt(account.refreshTokenEncrypted);
 
+    // Check if token needs refresh
     const now = new Date();
     const updatedAt = new Date(account.updatedAt);
     const hoursPassed = (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60);
@@ -184,9 +188,13 @@ export default async function handler(req, res) {
       response: patchResponse.data,
     });
   } catch (err) {
-    console.error("[API] ❌ Error processing request:", err?.response?.data || err.message);
+    console.error("[API] ❌ Unhandled error:", err?.message || err);
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.status(500).json({
-      error: err?.response?.data || err.message,
+      error: "Internal Server Error",
+      details: err?.message || err,
     });
   }
 }
