@@ -47,16 +47,15 @@ function camelToSnake(str) {
 }
 
 export default async function handler(req, res) {
-  // ✅ CORS HEADERS
-  res.setHeader("Access-Control-Allow-Origin", "https://app.gohighlevel.com");
+  // ✅ CORS abierto a cualquier origen
+  res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method === "OPTIONS") {
-    // ✅ devolver HEADERS también en OPTIONS:
     return res
       .writeHead(200, {
-        "Access-Control-Allow-Origin": "https://app.gohighlevel.com",
+        "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
       })
