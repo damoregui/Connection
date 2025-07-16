@@ -233,3 +233,9 @@ connectMongo().then(() => {
 });
 
 module.exports = app;
+
+
+app.post("/api/submit-ghl-fields", (req, res) => {
+  console.log("✅ Received data:", req.body);
+  res.json({ message: "Data received OK!" });
+});
