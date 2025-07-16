@@ -4,9 +4,24 @@ const axios = require("axios");
 const qs = require("querystring");
 const crypto = require("crypto");
 const { MongoClient } = require("mongodb");
+const cors = require("cors");
+
+app.use(cors({
+  origin: "https://app.gohighlevel.com",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
 
 const app = express();
 app.use(express.json());
+
+app.get('/api/callback', (req, res) => {
+  res.send("Callback works!");
+});
+
+app.post('/api/submit-ghl-fields', (req, res) => {
+  res.json({ success: true });
+});
 
 /* =========================
    TEMPORARY STORAGE
