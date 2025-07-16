@@ -1,5 +1,3 @@
-// /api/submit-ghl-fields.js
-
 import { MongoClient } from "mongodb";
 import crypto from "crypto";
 import axios from "axios";
@@ -55,7 +53,14 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method === "OPTIONS") {
-    return res.status(200).end();
+    // ✅ devolver HEADERS también en OPTIONS:
+    return res
+      .writeHead(200, {
+        "Access-Control-Allow-Origin": "https://app.gohighlevel.com",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      })
+      .end();
   }
 
   if (req.method !== "POST") {
@@ -85,7 +90,6 @@ export default async function handler(req, res) {
     let accessToken = decrypt(account.accessTokenEncrypted);
     const refreshToken = decrypt(account.refreshTokenEncrypted);
 
-    // Check if token needs refresh
     const now = new Date();
     const updatedAt = new Date(account.updatedAt);
     const hoursPassed = (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60);
@@ -187,4 +191,3 @@ export default async function handler(req, res) {
     });
   }
 }
- 
