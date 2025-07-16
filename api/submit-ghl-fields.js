@@ -259,5 +259,5 @@ export default async function handler(req, res) {
 function camelToSnake(str) {
   return str
     .replace(/([A-Z])/g, "_$1")
-    .toLowerCase();
+    .toLowerCase(); 
 }
