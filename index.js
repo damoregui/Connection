@@ -6,22 +6,15 @@ const crypto = require("crypto");
 const { MongoClient } = require("mongodb");
 const cors = require("cors");
 
+const app = express();
+
 app.use(cors({
   origin: "https://app.gohighlevel.com",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-const app = express();
 app.use(express.json());
-
-app.get('/api/callback', (req, res) => {
-  res.send("Callback works!");
-});
-
-app.post('/api/submit-ghl-fields', (req, res) => {
-  res.json({ success: true });
-});
 
 /* =========================
    TEMPORARY STORAGE
@@ -137,136 +130,6 @@ app.post("/api/ghl-webhook", async (req, res) => {
 });
 
 /* =========================
-   NEW ROUTE → submit-ghl-fields
-========================= */
-
-app.post("/api/submit-ghl-fields", async (req, res) => {
-  console.log("➡️ HIT /api/submit-ghl-fields");
-
-  try {
-    const data = req.body;
-    console.log("[API] Received payload:", data);
-
-    const locationId = data.locationId;
-    if (!locationId) {
-      console.log("[API] ❌ Missing locationId in payload.");
-      return res.status(400).json({ error: "Missing locationId." });
-    }
-
-    const account = await accountsCollection.findOne({ locationId });
-
-    if (!account) {
-      console.log("[API] ❌ No account found for locationId:", locationId);
-      return res.status(404).json({ error: "Location not found in DB." });
-    }
-
-    let accessToken = decrypt(account.accessTokenEncrypted);
-    const refreshToken = decrypt(account.refreshTokenEncrypted);
-
-    // Check if token needs refresh
-    const now = new Date();
-    const updatedAt = new Date(account.updatedAt);
-    const hoursPassed =
-      (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60);
-
-    if (hoursPassed > 24) {
-      console.log("[Token] Access token expired. Refreshing...");
-
-      const tokenResponse = await axios.post(
-        "https://services.leadconnectorhq.com/oauth/token",
-        qs.stringify({
-          client_id: process.env.GHL_CLIENT_ID,
-          client_secret: process.env.GHL_CLIENT_SECRET,
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-          user_type: "Company",
-          redirect_uri: process.env.REDIRECT_URI,
-        }),
-        {
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Accept: "application/json",
-          },
-        }
-      );
-
-      console.log("[Token] ✅ Token refreshed.");
-
-      accessToken = tokenResponse.data.access_token;
-      const newRefreshToken = tokenResponse.data.refresh_token;
-
-      await accountsCollection.updateOne(
-        { locationId },
-        {
-          $set: {
-            accessTokenEncrypted: encrypt(accessToken),
-            refreshTokenEncrypted: encrypt(newRefreshToken),
-            updatedAt: new Date(),
-          },
-        }
-      );
-      console.log("[Token] ✅ Mongo updated with new tokens.");
-    }
-
-    const mappedFields = {};
-    for (const [fieldName, value] of Object.entries(data)) {
-      if (!value || value.trim() === "") continue;
-
-      const fieldKey = `{{ custom_values.${camelToSnake(fieldName)} }}`;
-
-      if (account.fieldMappings[fieldKey]) {
-        const customValueId = account.fieldMappings[fieldKey];
-        mappedFields[customValueId] = value;
-        console.log(`[MAP] ${fieldName} → ${customValueId}`);
-      } else {
-        console.log(`[SKIP] Field ${fieldName} not mapped in Mongo.`);
-      }
-    }
-
-    if (Object.keys(mappedFields).length === 0) {
-      console.log("[API] No mapped fields found to update.");
-      return res.status(400).json({
-        error: "No mapped fields found to update.",
-      });
-    }
-
-    const patchPayload = {
-      customValues: Object.entries(mappedFields).map(
-        ([id, value]) => ({
-          id,
-          value,
-        })
-      ),
-    };
-
-    console.log("[PATCH] Sending payload to GHL:", patchPayload);
-
-    const patchResponse = await axios.patch(
-      `https://services.leadconnectorhq.com/locations/${locationId}/customValues`,
-      patchPayload,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Version: "2021-07-28",
-        },
-      }
-    );
-
-    console.log("[API] ✅ Custom Values updated in GHL.");
-
-    res.json({
-      message: "Custom values updated successfully in GHL.",
-      response: patchResponse.data,
-    });
-  } catch (err) {
-    console.error("[API] ❌ Error processing request:", err?.response?.data || err.message);
-    res.status(500).json({
-      error: err?.response?.data || err.message,
-    });
-  }
-});
-
-/* =========================
    Process OAuth Flow
 ========================= */
 
@@ -369,7 +232,6 @@ function camelToSnake(str) {
     .replace(/([A-Z])/g, "_$1")
     .toLowerCase();
 }
-
 
 app.get("/favicon.ico", (req, res) => res.sendStatus(204));
 app.get("/favicon.png", (req, res) => res.sendStatus(204));
