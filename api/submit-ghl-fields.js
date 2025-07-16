@@ -1,263 +1,395 @@
-import { MongoClient } from "mongodb";
-import fetch from "node-fetch";
-import crypto from "crypto";
-import qs from "querystring";
+require("dotenv").config();
 
-/* ======================
-   Mongo Connection
-====================== */
+const express = require("express");
+const cors = require("cors");
+const axios = require("axios");
+const qs = require("querystring");
+const crypto = require("crypto");
+const { MongoClient } = require("mongodb");
 
-const mongoClient = new MongoClient(process.env.MONGODB_URI);
+const app = express();
 
-async function getMongoCollection() {
-  if (!mongoClient.topology?.isConnected()) {
-    console.log("[Mongo] Connecting to MongoDB...");
+// CORS middleware
+app.use(cors({
+  origin: "https://app.gohighlevel.com",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+// Respond to preflight OPTIONS
+app.options("*", cors({
+  origin: "https://app.gohighlevel.com",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+app.use(express.json());
+
+/* =========================
+   TEMPORARY STORAGE
+========================= */
+
+const TEMP_STORAGE = {
+  code: null,
+  locationId: null,
+};
+
+/* =========================
+   MongoDB Setup
+========================= */
+
+const mongoClient = new MongoClient(process.env.MONGODB_URI, {
+  ssl: true,
+  serverSelectionTimeoutMS: 15000,
+});
+
+let accountsCollection;
+
+async function connectMongo() {
+  try {
     await mongoClient.connect();
-    console.log("[Mongo] MongoDB connected.");
+    console.log("✅ MongoDB connected.");
+
+    const db = mongoClient.db(process.env.MONGODB_DBNAME || "ghlApp");
+    accountsCollection = db.collection("accounts");
+    console.log("✅ accountsCollection ready.");
+  } catch (err) {
+    console.error("❌ ERROR connecting to MongoDB:", err?.message, err?.stack);
+    process.exit(1);
   }
-  const db = mongoClient.db(process.env.MONGODB_DBNAME || 'ghlApp');
-  return db.collection('accounts');
 }
 
-/* ======================
-   Encryption / Decryption
-====================== */
+/* =========================
+   Crypto Utils
+========================= */
 
-const ENCRYPT_SECRET = process.env.ENCRYPT_SECRET || 'super-secret-password';
-const SALT = 'my-salt';
-
-function decrypt(encrypted) {
-  const [ivHex, encryptedData] = encrypted.split(':');
-  const iv = Buffer.from(ivHex, 'hex');
-  const key = crypto.scryptSync(ENCRYPT_SECRET, SALT, 32);
-  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
+const ENCRYPT_SECRET = process.env.ENCRYPT_SECRET;
+if (!ENCRYPT_SECRET) {
+  throw new Error("ENCRYPT_SECRET is not defined in environment variables!");
+}
+const SALT = process.env.ENCRYPT_SALT;
+if (!SALT) {
+  throw new Error("ENCRYPT_SALT is not defined in environment variables!");
 }
 
 function encrypt(text) {
   const key = crypto.scryptSync(ENCRYPT_SECRET, SALT, 32);
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  return iv.toString('hex') + ':' + encrypted;
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  return iv.toString("hex") + ":" + encrypted;
 }
 
-/* ======================
-   Captcha Verification
-====================== */
-
-async function verifyCaptcha(token) {
-  if (!token) return false;
-  const secret = process.env.RECAPTCHA_SECRET_KEY;
-  const response = await fetch("https://www.google.com/recaptcha/api/siteverify", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `secret=${secret}&response=${token}`,
-  });
-  const data = await response.json();
-  console.log(`[Captcha] Success: ${data.success}, Score: ${data.score ?? 'n/a'}`);
-  return data.success === true;
+function decrypt(encrypted) {
+  const [ivHex, encryptedData] = encrypted.split(":");
+  const iv = Buffer.from(ivHex, "hex");
+  const key = crypto.scryptSync(ENCRYPT_SECRET, SALT, 32);
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  let decrypted = decipher.update(encryptedData, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
 }
 
-/* ======================
-   Refresh Token Logic
-====================== */
+/* =========================
+   ROUTES
+========================= */
 
-async function refreshAccessToken(refreshToken) {
-  console.log("[Token] Refreshing access token...");
+app.get('/api/callback', (req, res) => {
+  res.send("Callback works!");
+});
 
-  const res = await fetch(
-    "https://services.leadconnectorhq.com/oauth/token",
-    {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: qs.stringify({
-        client_id: process.env.GHL_CLIENT_ID,
-        client_secret: process.env.GHL_CLIENT_SECRET,
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        user_type: "Company",
-        redirect_uri: "https://leadshub360.com/"
-      })
-    }
-  );
-
-  if (!res.ok) {
-    const errorData = await res.json();
-    console.error("[Token] ❌ Error refreshing token:", errorData);
-    throw new Error("Failed to refresh access token");
-  }
-
-  const data = await res.json();
-
-  console.log("[Token] ✅ Token refresh successful.");
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token
-  };
-}
-
-/* ======================
-   Handler
-====================== */
-
-export default async function handler(req, res) {
-  console.log("➡️ [API] submit-ghl-fields HIT.");
-
-  if (req.method !== "POST") {
-    console.log("[API] Method not allowed:", req.method);
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+app.post('/api/submit-ghl-fields', async (req, res) => {
+  console.log("➡️ HIT /api/submit-ghl-fields");
 
   try {
-    const { locationId, recaptchaToken, ...formFields } = req.body;
+    const data = req.body;
+    console.log("[API] Received payload:", data);
 
-    console.log(`[API] LocationID: ${locationId}`);
-    console.log(`[API] Fields received: ${Object.keys(formFields).join(", ")}`);
-
+    const locationId = data.locationId;
     if (!locationId) {
-      console.warn("[API] Missing locationId in request.");
-      return res.status(400).json({ error: "Missing locationId in request." });
+      console.log("[API] ❌ Missing locationId in payload.");
+      return res.status(400).json({ error: "Missing locationId." });
     }
-
-    const captchaOk = await verifyCaptcha(recaptchaToken);
-    if (!captchaOk) {
-      console.warn("[API] Captcha validation failed.");
-      return res.status(400).json({ error: "Captcha verification failed" });
-    }
-
-    console.log("[API] ✅ Captcha passed.");
-
-    const accountsCollection = await getMongoCollection();
 
     const account = await accountsCollection.findOne({ locationId });
 
     if (!account) {
-      console.warn(`[API] No account found in Mongo for locationId: ${locationId}`);
-      return res.status(404).json({ error: "Location ID not found in database." });
+      console.log("[API] ❌ No account found for locationId:", locationId);
+      return res.status(404).json({ error: "Location not found in DB." });
     }
 
     let accessToken = decrypt(account.accessTokenEncrypted);
+    const refreshToken = decrypt(account.refreshTokenEncrypted);
 
-    const tokenAgeMs = Date.now() - new Date(account.updatedAt).getTime();
-    console.log(`[Token] Token age in minutes: ${(tokenAgeMs / 60000).toFixed(2)} minutes.`);
+    // Check if token needs refresh
+    const now = new Date();
+    const updatedAt = new Date(account.updatedAt);
+    const hoursPassed =
+      (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60);
 
-    if (tokenAgeMs > 24 * 60 * 60 * 1000) {
+    if (hoursPassed > 24) {
       console.log("[Token] Access token expired. Refreshing...");
 
-      const decryptedRefreshToken = decrypt(account.refreshTokenEncrypted);
-      const refreshed = await refreshAccessToken(decryptedRefreshToken);
+      const tokenResponse = await axios.post(
+        "https://services.leadconnectorhq.com/oauth/token",
+        qs.stringify({
+          client_id: process.env.GHL_CLIENT_ID,
+          client_secret: process.env.GHL_CLIENT_SECRET,
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          user_type: "Company",
+          redirect_uri: process.env.REDIRECT_URI,
+        }),
+        {
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+        }
+      );
 
-      accessToken = refreshed.accessToken;
+      console.log("[Token] ✅ Token refreshed.");
 
-      // Save new tokens in Mongo
-      const encryptedAccessToken = encrypt(refreshed.accessToken);
-      const encryptedRefreshToken = encrypt(refreshed.refreshToken);
+      accessToken = tokenResponse.data.access_token;
+      const newRefreshToken = tokenResponse.data.refresh_token;
 
       await accountsCollection.updateOne(
         { locationId },
         {
           $set: {
-            accessTokenEncrypted: encryptedAccessToken,
-            refreshTokenEncrypted: encryptedRefreshToken,
-            updatedAt: new Date()
-          }
+            accessTokenEncrypted: encrypt(accessToken),
+            refreshTokenEncrypted: encrypt(newRefreshToken),
+            updatedAt: new Date(),
+          },
         }
       );
-
-      console.log("[Token] ✅ New access token saved to Mongo.");
-    } else {
-      console.log("[Token] Access token still valid, using cached token.");
+      console.log("[Token] ✅ Mongo updated with new tokens.");
     }
 
-    const fieldMappings = account.fieldMappings || {};
-    console.log(`[API] Loaded ${Object.keys(fieldMappings).length} field mappings from Mongo.`);
+    const mappedFields = {};
+    for (const [fieldName, value] of Object.entries(data)) {
+      if (!value || value.trim() === "") continue;
 
-    const payload = [];
+      const fieldKey = `{{ custom_values.${camelToSnake(fieldName)} }}`;
 
-    for (const [field, value] of Object.entries(formFields)) {
-      if (value === undefined || value === null || value === "") {
-        console.log(`[Mapping] Skipping empty field "${field}".`);
-        continue;
-      }
-
-      const snakeKey = camelToSnake(field);
-      const fieldKey = `{{ custom_values.${snakeKey} }}`;
-
-      const customValueId = fieldMappings[fieldKey];
-      if (customValueId) {
-        payload.push({
-          id: customValueId,
-          value: value
-        });
-        console.log(`[Mapping] Field "${field}" → ${fieldKey} → ID ${customValueId}`);
+      if (account.fieldMappings[fieldKey]) {
+        const customValueId = account.fieldMappings[fieldKey];
+        mappedFields[customValueId] = value;
+        console.log(`[MAP] ${fieldName} → ${customValueId}`);
       } else {
-        console.log(`[Mapping] ⚠️ No mapping found for field "${field}" → ${fieldKey}`);
+        console.log(`[SKIP] Field ${fieldName} not mapped in Mongo.`);
       }
     }
 
-    if (payload.length === 0) {
-      console.warn("[API] No mapped fields found to update.");
+    if (Object.keys(mappedFields).length === 0) {
+      console.log("[API] No mapped fields found to update.");
       return res.status(400).json({
-        error: "No mapped fields found to update."
+        error: "No mapped fields found to update.",
       });
     }
 
-    console.log("[API] Payload ready for GHL PATCH:", JSON.stringify(payload, null, 2));
+    const patchPayload = {
+      customValues: Object.entries(mappedFields).map(
+        ([id, value]) => ({
+          id,
+          value,
+        })
+      ),
+    };
 
-    const ghlUrl = `https://services.leadconnectorhq.com/v1/locations/${locationId}/customValues`;
+    console.log("[PATCH] Sending payload to GHL:", patchPayload);
 
-    const ghlResponse = await fetch(ghlUrl, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-        Version: "2021-07-28"
-      },
-      body: JSON.stringify(payload)
-    });
+    const patchResponse = await axios.patch(
+      `https://services.leadconnectorhq.com/locations/${locationId}/customValues`,
+      patchPayload,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Version: "2021-07-28",
+        },
+      }
+    );
 
-    const result = await ghlResponse.json();
+    console.log("[API] ✅ Custom Values updated in GHL.");
 
-    console.log("[API] GHL response status:", ghlResponse.status);
-    console.log("[API] GHL response data:", result);
-
-    if (!ghlResponse.ok) {
-      console.error("[API] ❌ GHL PATCH failed.", result);
-      return res.status(500).json({
-        error: "Error updating custom values in GHL.",
-        details: result
-      });
-    }
-
-    console.log("[API] ✅ Custom values updated successfully in GHL.");
-
-    return res.status(200).json({
+    res.json({
       message: "Custom values updated successfully in GHL.",
-      ghlResponse: result
+      response: patchResponse.data,
     });
-
-  } catch (e) {
-    console.error("[API] ❌ Unexpected server error:", e);
-    return res.status(500).json({
-      error: "Unexpected server error.",
-      details: e.toString(),
+  } catch (err) {
+    console.error("[API] ❌ Error processing request:", err?.response?.data || err.message);
+    res.status(500).json({
+      error: err?.response?.data || err.message,
     });
   }
-}
+});
 
-/* ======================
-   Helper: camelCase → snake_case
-====================== */
+/* =========================
+   CALLBACK → receive code
+========================= */
+
+app.get("/api/callback", async (req, res) => {
+  console.log("➡️ HIT /api/callback");
+  console.log("Query params:", req.query);
+
+  const { code } = req.query;
+
+  TEMP_STORAGE.code = code;
+
+  console.log("TEMP_STORAGE now:", TEMP_STORAGE);
+
+  if (TEMP_STORAGE.code && TEMP_STORAGE.locationId) {
+    await processOAuthFlow(res);
+  } else {
+    res.sendStatus(200);
+  }
+});
+
+/* =========================
+   WEBHOOK → receives locationId
+========================= */
+
+app.post("/api/ghl-webhook", async (req, res) => {
+  console.log("➡️ HIT /api/ghl-webhook");
+  console.log("Webhook body:", req.body);
+
+  const body = req.body;
+
+  if (body.type === "INSTALL") {
+    const locationId = body.locationId;
+    console.log("➡️ Webhook INSTALL. LocationId:", locationId);
+
+    TEMP_STORAGE.locationId = locationId;
+    console.log("TEMP_STORAGE now:", TEMP_STORAGE);
+
+    if (TEMP_STORAGE.code) {
+      await processOAuthFlow(res);
+    } else {
+      res.sendStatus(200);
+    }
+  } else {
+    console.log("ℹ️ Webhook ignored. Type:", body.type);
+    res.sendStatus(200);
+  }
+});
+
+/* =========================
+   Utils
+========================= */
 
 function camelToSnake(str) {
   return str
     .replace(/([A-Z])/g, "_$1")
-    .toLowerCase(); 
+    .toLowerCase();
 }
+
+/* =========================
+   Process OAuth Flow
+========================= */
+
+async function processOAuthFlow(res) {
+  console.log("➡️ Entering processOAuthFlow");
+  console.log("TEMP_STORAGE before token exchange:", TEMP_STORAGE);
+
+  try {
+    console.log("➡️ Doing token exchange...");
+    const tokenResponse = await axios.post(
+      "https://services.leadconnectorhq.com/oauth/token",
+      qs.stringify({
+        client_id: process.env.GHL_CLIENT_ID,
+        client_secret: process.env.GHL_CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code: TEMP_STORAGE.code,
+        redirect_uri: process.env.REDIRECT_URI,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      }
+    );
+
+    const { access_token, refresh_token } = tokenResponse.data;
+
+    console.log("✅ Token exchange OK.");
+    console.log("Tokens received:", {
+      access_token: access_token?.substring(0, 10) + "...",
+      refresh_token: refresh_token?.substring(0, 10) + "...",
+    });
+
+    console.log("➡️ Fetching custom values...");
+    const fieldsResponse = await axios.get(
+      `https://services.leadconnectorhq.com/locations/${TEMP_STORAGE.locationId}/customValues`,
+      {
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          Version: "2021-07-28",
+        },
+      }
+    );
+
+    const fieldsData = fieldsResponse.data;
+    console.log("✅ Custom values fetched:", fieldsData?.customValues?.length || 0);
+
+    const fieldMappings = {};
+    fieldsData?.customValues?.forEach((field) => {
+      fieldMappings[field.fieldKey] = field.id;
+    });
+
+    console.log("➡️ Custom value mappings:", fieldMappings);
+
+    const encryptedAccessToken = encrypt(access_token);
+    const encryptedRefreshToken = encrypt(refresh_token);
+
+    const updateResult = await accountsCollection.updateOne(
+      { locationId: TEMP_STORAGE.locationId },
+      {
+        $set: {
+          locationId: TEMP_STORAGE.locationId,
+          accessTokenEncrypted: encryptedAccessToken,
+          refreshTokenEncrypted: encryptedRefreshToken,
+          fieldMappings,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: {
+          createdAt: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+
+    console.log("✅ MongoDB update result:", updateResult);
+
+    await axios.post(process.env.GHL_WEBHOOK_URL, {
+      locationId: TEMP_STORAGE.locationId,
+      access_token,
+      refresh_token,
+    });
+    console.log("✅ Data sent to inbound webhook.");
+
+    TEMP_STORAGE.code = null;
+    TEMP_STORAGE.locationId = null;
+
+    res.redirect("https://app.gohighlevel.com/v2/preview/ScbPusBtq4O63sGgKeYr?notrack=true");
+  } catch (err) {
+    console.error("❌ ERROR en processOAuthFlow:", err?.response?.data || err.message, err?.stack);
+    res.status(500).send("An error occurred, please contact support.");
+  }
+}
+
+app.get("/favicon.ico", (req, res) => res.sendStatus(204));
+app.get("/favicon.png", (req, res) => res.sendStatus(204));
+
+/* =========================
+   Start Server
+========================= */
+
+connectMongo().then(() => {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
+});
+
+module.exports = app;
