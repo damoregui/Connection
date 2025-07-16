@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 
 /* =========================
-   TEMPORARY STORAGE
+   TEMPORARY STORAGE -->  this is just for saving the code temporarily since we don't have a session... there was no other way. 
 ========================= */
 
 const TEMP_STORAGE = {
@@ -18,7 +18,7 @@ const TEMP_STORAGE = {
 };
 
 /* =========================
-   MongoDB Setup
+   MongoDB Setup --> Guido has access to this account. Credentials will be provided by him.
 ========================= */
 
 const mongoClient = new MongoClient(process.env.MONGODB_URI, {
@@ -72,7 +72,7 @@ function decrypt(encrypted) {
    Routes
 ========================= */
 
-// CALLBACK → recibe el code
+// CALLBACK → receive code 
 app.get('/api/callback', async (req, res) => {
   console.log('➡️ HIT /api/callback');
   console.log('Query params:', req.query);
@@ -90,7 +90,7 @@ app.get('/api/callback', async (req, res) => {
   }
 });
 
-// WEBHOOK → recibe locationId
+// WEBHOOK → recives locationId
 app.post('/api/ghl-webhook', async (req, res) => {
   console.log('➡️ HIT /api/ghl-webhook');
   console.log('Webhook body:', req.body);
@@ -120,11 +120,11 @@ app.post('/api/ghl-webhook', async (req, res) => {
 ========================= */
 
 async function processOAuthFlow(res) {
-  console.log('➡️ Entrando en processOAuthFlow');
-  console.log('TEMP_STORAGE antes de token exchange:', TEMP_STORAGE);
+  console.log('➡️ Entering  processOAuthFlow');
+  console.log('TEMP_STORAGE before token exchange:', TEMP_STORAGE);
 
   try {
-    console.log('➡️ Haciendo token exchange...');
+    console.log('➡️ Doing token exchange...');
     const tokenResponse = await axios.post(
       'https://services.leadconnectorhq.com/oauth/token',
       qs.stringify({
@@ -149,7 +149,7 @@ async function processOAuthFlow(res) {
       refresh_token: refresh_token?.substring(0, 10) + '...'
     });
 
-    // Fetch custom values
+    // Fetch custom values in the account. This is for mapping everything in mongo. 
     console.log('➡️ Fetching custom values...');
     const fieldsResponse = await axios.get(
       `https://services.leadconnectorhq.com/locations/${TEMP_STORAGE.locationId}/customValues`,
@@ -173,7 +173,7 @@ async function processOAuthFlow(res) {
     console.log('➡️ Custom value mappings:', fieldMappings);
 
     // Save to MongoDB
-    console.log('➡️ Guardando en MongoDB...');
+    console.log('➡️ Saving in MongoDB...');
     const encryptedAccessToken = encrypt(access_token);
     const encryptedRefreshToken = encrypt(refresh_token);
 
@@ -201,14 +201,14 @@ async function processOAuthFlow(res) {
 
     console.log('✅ MongoDB update result:', updateResult);
 
-    // Opcional → notificar webhook interno
+    // Opcional → Notify internal webhook -> this was just for testing. Taking it out later. 
     console.log('➡️ Enviando datos a GHL_WEBHOOK_URL...');
     await axios.post(process.env.GHL_WEBHOOK_URL, {
       locationId: TEMP_STORAGE.locationId,
       access_token,
       refresh_token
     });
-    console.log('✅ Data enviada a inbound webhook.');
+    console.log('✅ Data sent to inbound webhook.');
 
     TEMP_STORAGE.code = null;
     TEMP_STORAGE.locationId = null;
