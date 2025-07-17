@@ -45,18 +45,13 @@ function camelToSnake(str) {
 }
 
 async function handler(req, res) {
-  // CORS
+  // CORS HEADERS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   await connectMongo();
 
@@ -66,23 +61,20 @@ async function handler(req, res) {
     console.log("[API] Received payload:", data);
 
     const locationId = data.locationId;
-    if (!locationId) {
-      return res.status(400).json({ error: "Missing locationId." });
-    }
+    if (!locationId) return res.status(400).json({ error: "Missing locationId" });
 
     const account = await accountsCollection.findOne({ locationId });
-    if (!account) {
-      return res.status(404).json({ error: "Location not found in DB." });
-    }
+    if (!account) return res.status(404).json({ error: "Location not found in DB" });
 
     let accessToken = decrypt(account.accessTokenEncrypted);
     const refreshToken = decrypt(account.refreshTokenEncrypted);
 
+    // Refresh token if > 24h
     const now = new Date();
     const updatedAt = new Date(account.updatedAt);
     const hoursPassed = (now - updatedAt) / (1000 * 60 * 60);
-
     if (hoursPassed > 24) {
+      console.log("[Token] Refreshing access token...");
       const tokenResponse = await axios.post(
         "https://services.leadconnectorhq.com/oauth/token",
         qs.stringify({
@@ -100,10 +92,8 @@ async function handler(req, res) {
           },
         }
       );
-
       accessToken = tokenResponse.data.access_token;
       const newRefreshToken = tokenResponse.data.refresh_token;
-
       await accountsCollection.updateOne(
         { locationId },
         {
@@ -114,15 +104,24 @@ async function handler(req, res) {
           },
         }
       );
+      console.log("[Token] Token refreshed and Mongo updated.");
     }
+
+    console.log("✔️ fieldMappings:", JSON.stringify(account.fieldMappings, null, 2));
 
     const mappedFields = {};
     for (const [fieldName, value] of Object.entries(data)) {
       if (!value || value.trim() === "") continue;
-      const fieldKey = `{{ custom_values.${camelToSnake(fieldName)} }}`;
+
+      const snakeKey = camelToSnake(fieldName);
+      const fieldKey = `{{ custom_values.${snakeKey} }}`;
+
       if (account.fieldMappings[fieldKey]) {
         const customValueId = account.fieldMappings[fieldKey];
         mappedFields[customValueId] = value;
+        console.log(`[MAP] ${fieldName} → ${customValueId}`);
+      } else {
+        console.log(`[SKIP] No match for ${fieldName} (${fieldKey})`);
       }
     }
 
@@ -133,6 +132,8 @@ async function handler(req, res) {
     const patchPayload = {
       customValues: Object.entries(mappedFields).map(([id, value]) => ({ id, value })),
     };
+
+    console.log("[PATCH] Sending payload to GHL:", JSON.stringify(patchPayload, null, 2));
 
     const patchResponse = await axios.patch(
       `https://services.leadconnectorhq.com/locations/${locationId}/customValues`,
@@ -145,13 +146,17 @@ async function handler(req, res) {
       }
     );
 
-    res.status(200).json({
+    console.log("[API] ✅ Custom Values updated in GHL.");
+
+    return res.status(200).json({
       message: "Custom values updated successfully in GHL.",
       response: patchResponse.data,
     });
   } catch (err) {
     console.error("[API] ❌ Error:", err?.response?.data || err.message);
-    res.status(500).json({ error: err?.response?.data || err.message });
+    return res.status(500).json({
+      error: err?.response?.data || err.message,
+    });
   }
 }
 
