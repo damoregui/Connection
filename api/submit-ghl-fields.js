@@ -1,3 +1,4 @@
+// /api/submit-ghl-fields.js
 const { MongoClient } = require("mongodb");
 const crypto = require("crypto");
 const axios = require("axios");
@@ -41,11 +42,12 @@ function decrypt(encrypted) {
 }
 
 function camelToSnake(str) {
-  return str.replace(/([A-Z])/g, "_$1").toLowerCase();
+  return str
+    .replace(/([A-Z])/g, "_$1")
+    .toLowerCase();
 }
 
-// MAIN HANDLER
-module.exports = async (req, res) => {
+module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -61,10 +63,14 @@ module.exports = async (req, res) => {
     console.log("[API] Received payload:", data);
 
     const locationId = data.locationId;
-    if (!locationId) return res.status(400).json({ error: "Missing locationId." });
+    if (!locationId) {
+      return res.status(400).json({ error: "Missing locationId." });
+    }
 
     const account = await accountsCollection.findOne({ locationId });
-    if (!account) return res.status(404).json({ error: "Location not found in DB." });
+    if (!account) {
+      return res.status(404).json({ error: "Location not found in DB." });
+    }
 
     let accessToken = decrypt(account.accessTokenEncrypted);
     const refreshToken = decrypt(account.refreshTokenEncrypted);
@@ -113,23 +119,24 @@ module.exports = async (req, res) => {
       if (!value || value.trim() === "" || fieldName === "locationId") continue;
 
       const fieldKey = `{{ custom_values.${camelToSnake(fieldName)} }}`;
-      const fieldInfo = account.fieldMappings[fieldKey];
+      const customValueId = account.fieldMappings[fieldKey];
 
-      if (!fieldInfo) {
+      if (!customValueId) {
         console.log(`[SKIP] No mapping found for: ${fieldKey}`);
         continue;
       }
 
-      const { id: customValueId, name: customValueName } = fieldInfo;
+      const fieldDisplayName = fieldName
+        .replace(/([A-Z])/g, " $1")
+        .replace(/^./, (s) => s.toUpperCase());
 
       const payload = {
-        name: customValueName,
+        name: fieldDisplayName,
         value,
       };
 
-      console.log(`[PUT] Updating ${customValueName} (${customValueId}) with value: ${value}`);
-
       const url = `https://services.leadconnectorhq.com/locations/${locationId}/customValues/${customValueId}`;
+      console.log(`[PUT] Updating ${fieldDisplayName} (${customValueId}) with value: ${value}`);
 
       updates.push(
         axios.put(url, payload, {
@@ -141,12 +148,15 @@ module.exports = async (req, res) => {
       );
     }
 
+    if (updates.length === 0) {
+      return res.status(400).json({ error: "No mapped fields found to update." });
+    }
+
     await Promise.all(updates);
 
-    console.log("✅ All values updated successfully.");
-    return res.status(200).json({ message: "Custom values updated in GHL." });
+    res.status(200).json({ message: "Custom values updated successfully in GHL." });
   } catch (err) {
     console.error("[API] ❌ Error:", err?.response?.data || err.message);
-    return res.status(500).json({ error: err?.response?.data || err.message });
+    res.status(500).json({ error: err?.response?.data || err.message });
   }
 };
