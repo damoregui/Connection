@@ -1,11 +1,16 @@
+const { buffer } = require("micro");
 const axios = require("axios");
 const { connectMongo } = require("../lib/mongo");
 const { decrypt } = require("../lib/encrypt");
 
 module.exports = async (req, res) => {
-  console.log("➡️ HIT /api/submit-ghl-fields");
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
-  const { locationId, updates } = req.body;
+  const rawBody = await buffer(req);
+  const body = JSON.parse(rawBody.toString("utf8"));
+  const { locationId, updates } = body;
 
   if (!locationId || !Array.isArray(updates)) {
     return res.status(400).json({ error: "Missing locationId or updates" });
