@@ -1,4 +1,3 @@
-
 const { MongoClient } = require("mongodb");
 const crypto = require("crypto");
 const axios = require("axios");
@@ -39,10 +38,6 @@ function decrypt(encrypted) {
   let decrypted = decipher.update(encryptedData, "hex", "utf8");
   decrypted += decipher.final("utf8");
   return decrypted;
-}
-
-function camelToSnake(str) {
-  return str.replace(/([A-Z])/g, "_$1").toLowerCase();
 }
 
 function camelToFieldName(camelCase) {
