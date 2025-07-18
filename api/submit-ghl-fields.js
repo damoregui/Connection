@@ -4,19 +4,29 @@ const { connectMongo } = require("../lib/mongo");
 const { decrypt } = require("../lib/encrypt");
 
 module.exports = async (req, res) => {
+  // CORS headers (necesarios para frontend desde otro dominio)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Preflight (CORS) request
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const rawBody = await buffer(req);
-  const body = JSON.parse(rawBody.toString("utf8"));
-  const { locationId, updates } = body;
-
-  if (!locationId || !Array.isArray(updates)) {
-    return res.status(400).json({ error: "Missing locationId or updates" });
-  }
-
   try {
+    const rawBody = await buffer(req);
+    const body = JSON.parse(rawBody.toString("utf8"));
+    const { locationId, updates } = body;
+
+    if (!locationId || !Array.isArray(updates)) {
+      return res.status(400).json({ error: "Missing locationId or updates" });
+    }
+
     const db = await connectMongo();
     const account = await db.collection("accounts").findOne({ locationId });
 
