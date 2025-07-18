@@ -1,8 +1,6 @@
-// /api/submit-ghl-fields.js
-
-const axios = require("axios");
 const { MongoClient } = require("mongodb");
 const crypto = require("crypto");
+const axios = require("axios");
 const qs = require("querystring");
 
 const mongoClient = new MongoClient(process.env.MONGODB_URI, {
@@ -46,30 +44,13 @@ function camelToSnake(str) {
   return str.replace(/([A-Z])/g, "_$1").toLowerCase();
 }
 
-// Mapeo manual de campos que no coinciden con naming convention
-const manualKeyOverrides = {
-  agent_jurisdiction: "agent_governing_jurisdiction",
-  agent_state: "agent_governing_state",
-  agent_address: "agent_mailing_address",
-  producer_number: "national_producer_number",
-  business_phone: "business_phone_no",
-  mb_api_key: "marketing_boost_api_key",
-  mb_business_id: "marketing_boost_business_id",
-  mb_sender_id: "marketing_boost_sender_id",
-};
-
-module.exports = async function handler(req, res) {
+module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   await connectMongo();
 
@@ -119,6 +100,7 @@ module.exports = async function handler(req, res) {
         }
       );
 
+      console.log("[Token] ✅ Token refreshed.");
       accessToken = tokenResponse.data.access_token;
       const newRefreshToken = tokenResponse.data.refresh_token;
 
@@ -134,48 +116,50 @@ module.exports = async function handler(req, res) {
       );
     }
 
-    const updates = [];
+    const fieldMappings = account.fieldMappings;
+    const putResults = [];
 
     for (const [fieldName, value] of Object.entries(data)) {
-      if (!value || value.trim() === "" || fieldName === "locationId") continue;
+      if (!value || fieldName === "locationId") continue;
 
-      const overrideKey = manualKeyOverrides[fieldName];
-      const fieldKey = `{{ custom_values.${overrideKey || camelToSnake(fieldName)} }}`;
-      const fieldId = account.fieldMappings[fieldKey];
-      const fieldLabel = account.fieldLabels?.[fieldKey] || fieldName;
+      const fieldKey = `{{ custom_values.${camelToSnake(fieldName)} }}`;
+      const fieldId = fieldMappings[fieldKey];
 
       if (!fieldId) {
-        console.log(`[SKIP] No field mapping found for ${fieldName}`);
+        console.log(`[SKIP] Field ${fieldName} → ${fieldKey} not found in fieldMappings.`);
         continue;
       }
 
-      console.log(`[PUT] Updating ${fieldKey} (${fieldId}) with value: ${value}`);
+      console.log(`[PUT] Updating ${fieldName} (${fieldId}) with value: ${value}`);
 
-      const payload = {
-        name: fieldLabel,
-        value,
-      };
-
-      const putResponse = await axios.put(
-        `https://services.leadconnectorhq.com/locations/${locationId}/customValues/${fieldId}`,
-        payload,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Version: "2021-07-28",
+      try {
+        const putResponse = await axios.put(
+          `https://services.leadconnectorhq.com/locations/${locationId}/customValues/${fieldId}`,
+          {
+            name: fieldName, // Este nombre debe ser el visible en GHL, pero si el API acepta, usamos el camelCase
+            value,
           },
-        }
-      );
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              Version: "2021-07-28",
+            },
+          }
+        );
 
-      updates.push({ fieldKey, fieldId, status: putResponse.status });
+        putResults.push({ fieldName, fieldId, status: "ok" });
+      } catch (putErr) {
+        console.error(`[PUT] ❌ Error updating ${fieldName}:`, putErr?.response?.data || putErr.message);
+        putResults.push({ fieldName, fieldId, status: "error", error: putErr?.response?.data || putErr.message });
+      }
     }
 
     res.status(200).json({
-      message: "Fields updated in GHL.",
-      updates,
+      message: "Field update process complete.",
+      results: putResults,
     });
   } catch (err) {
-    console.error("[API] ❌ Error:", err?.response?.data || err.message);
+    console.error("[API] ❌ General error:", err?.response?.data || err.message);
     res.status(500).json({
       error: err?.response?.data || err.message,
     });
