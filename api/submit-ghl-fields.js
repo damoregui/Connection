@@ -40,6 +40,10 @@ function decrypt(encrypted) {
   return decrypted;
 }
 
+function snakeToCamel(str) {
+  return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+
 function camelToFieldName(camelCase) {
   return camelCase
     .replace(/([A-Z])/g, " $1")
@@ -113,15 +117,18 @@ module.exports = async (req, res) => {
     }
 
     for (const [fieldKey, customValueId] of Object.entries(account.fieldMappings)) {
-      const camelName = fieldKey
-        .replace("{{ custom_values.", "")
-        .replace(" }}", "");
+      const rawKey = fieldKey.replace("{{ custom_values.", "").replace(" }}", "");
+      const camelKey = snakeToCamel(rawKey);
+      const fieldName = camelToFieldName(camelKey);
+      const value = data[camelKey];
 
-      const value = data[camelName];
-      if (!value) continue;
+      if (!value) {
+        console.log(`[SKIP] No value provided for ${camelKey}`);
+        continue;
+      }
 
       const payload = {
-        name: camelToFieldName(camelName),
+        name: fieldName,
         value,
       };
 
