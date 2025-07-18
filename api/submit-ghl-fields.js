@@ -1,7 +1,8 @@
 // /api/submit-ghl-fields.js
+
+const axios = require("axios");
 const { MongoClient } = require("mongodb");
 const crypto = require("crypto");
-const axios = require("axios");
 const qs = require("querystring");
 
 const mongoClient = new MongoClient(process.env.MONGODB_URI, {
@@ -42,18 +43,33 @@ function decrypt(encrypted) {
 }
 
 function camelToSnake(str) {
-  return str
-    .replace(/([A-Z])/g, "_$1")
-    .toLowerCase();
+  return str.replace(/([A-Z])/g, "_$1").toLowerCase();
 }
+
+// Mapeo manual de campos que no coinciden con naming convention
+const manualKeyOverrides = {
+  agent_jurisdiction: "agent_governing_jurisdiction",
+  agent_state: "agent_governing_state",
+  agent_address: "agent_mailing_address",
+  producer_number: "national_producer_number",
+  business_phone: "business_phone_no",
+  mb_api_key: "marketing_boost_api_key",
+  mb_business_id: "marketing_boost_business_id",
+  mb_sender_id: "marketing_boost_sender_id",
+};
 
 module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
 
   await connectMongo();
 
@@ -64,11 +80,14 @@ module.exports = async function handler(req, res) {
 
     const locationId = data.locationId;
     if (!locationId) {
+      console.log("[API] ❌ Missing locationId in payload.");
       return res.status(400).json({ error: "Missing locationId." });
     }
 
     const account = await accountsCollection.findOne({ locationId });
+
     if (!account) {
+      console.log("[API] ❌ No account found for locationId:", locationId);
       return res.status(404).json({ error: "Location not found in DB." });
     }
 
@@ -80,6 +99,8 @@ module.exports = async function handler(req, res) {
     const hoursPassed = (now - updatedAt) / (1000 * 60 * 60);
 
     if (hoursPassed > 24) {
+      console.log("[Token] Access token expired. Refreshing...");
+
       const tokenResponse = await axios.post(
         "https://services.leadconnectorhq.com/oauth/token",
         qs.stringify({
@@ -118,45 +139,45 @@ module.exports = async function handler(req, res) {
     for (const [fieldName, value] of Object.entries(data)) {
       if (!value || value.trim() === "" || fieldName === "locationId") continue;
 
-      const fieldKey = `{{ custom_values.${camelToSnake(fieldName)} }}`;
-      const customValueId = account.fieldMappings[fieldKey];
+      const overrideKey = manualKeyOverrides[fieldName];
+      const fieldKey = `{{ custom_values.${overrideKey || camelToSnake(fieldName)} }}`;
+      const fieldId = account.fieldMappings[fieldKey];
+      const fieldLabel = account.fieldLabels?.[fieldKey] || fieldName;
 
-      if (!customValueId) {
-        console.log(`[SKIP] No mapping found for: ${fieldKey}`);
+      if (!fieldId) {
+        console.log(`[SKIP] No field mapping found for ${fieldName}`);
         continue;
       }
 
-      const fieldDisplayName = fieldName
-        .replace(/([A-Z])/g, " $1")
-        .replace(/^./, (s) => s.toUpperCase());
+      console.log(`[PUT] Updating ${fieldKey} (${fieldId}) with value: ${value}`);
 
       const payload = {
-        name: fieldDisplayName,
+        name: fieldLabel,
         value,
       };
 
-      const url = `https://services.leadconnectorhq.com/locations/${locationId}/customValues/${customValueId}`;
-      console.log(`[PUT] Updating ${fieldDisplayName} (${customValueId}) with value: ${value}`);
-
-      updates.push(
-        axios.put(url, payload, {
+      const putResponse = await axios.put(
+        `https://services.leadconnectorhq.com/locations/${locationId}/customValues/${fieldId}`,
+        payload,
+        {
           headers: {
             Authorization: `Bearer ${accessToken}`,
             Version: "2021-07-28",
           },
-        })
+        }
       );
+
+      updates.push({ fieldKey, fieldId, status: putResponse.status });
     }
 
-    if (updates.length === 0) {
-      return res.status(400).json({ error: "No mapped fields found to update." });
-    }
-
-    await Promise.all(updates);
-
-    res.status(200).json({ message: "Custom values updated successfully in GHL." });
+    res.status(200).json({
+      message: "Fields updated in GHL.",
+      updates,
+    });
   } catch (err) {
     console.error("[API] ❌ Error:", err?.response?.data || err.message);
-    res.status(500).json({ error: err?.response?.data || err.message });
+    res.status(500).json({
+      error: err?.response?.data || err.message,
+    });
   }
 };
