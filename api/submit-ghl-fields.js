@@ -1,3 +1,4 @@
+
 const { MongoClient } = require("mongodb");
 const crypto = require("crypto");
 const axios = require("axios");
@@ -44,6 +45,12 @@ function camelToSnake(str) {
   return str.replace(/([A-Z])/g, "_$1").toLowerCase();
 }
 
+function camelToFieldName(camelCase) {
+  return camelCase
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (str) => str.toUpperCase());
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -61,14 +68,11 @@ module.exports = async (req, res) => {
 
     const locationId = data.locationId;
     if (!locationId) {
-      console.log("[API] ❌ Missing locationId in payload.");
       return res.status(400).json({ error: "Missing locationId." });
     }
 
     const account = await accountsCollection.findOne({ locationId });
-
     if (!account) {
-      console.log("[API] ❌ No account found for locationId:", locationId);
       return res.status(404).json({ error: "Location not found in DB." });
     }
 
@@ -80,8 +84,6 @@ module.exports = async (req, res) => {
     const hoursPassed = (now - updatedAt) / (1000 * 60 * 60);
 
     if (hoursPassed > 24) {
-      console.log("[Token] Access token expired. Refreshing...");
-
       const tokenResponse = await axios.post(
         "https://services.leadconnectorhq.com/oauth/token",
         qs.stringify({
@@ -100,7 +102,6 @@ module.exports = async (req, res) => {
         }
       );
 
-      console.log("[Token] ✅ Token refreshed.");
       accessToken = tokenResponse.data.access_token;
       const newRefreshToken = tokenResponse.data.refresh_token;
 
@@ -116,50 +117,33 @@ module.exports = async (req, res) => {
       );
     }
 
-    const fieldMappings = account.fieldMappings;
-    const putResults = [];
+    for (const [fieldKey, customValueId] of Object.entries(account.fieldMappings)) {
+      const camelName = fieldKey
+        .replace("{{ custom_values.", "")
+        .replace(" }}", "");
 
-    for (const [fieldName, value] of Object.entries(data)) {
-      if (!value || fieldName === "locationId") continue;
+      const value = data[camelName];
+      if (!value) continue;
 
-      const fieldKey = `{{ custom_values.${camelToSnake(fieldName)} }}`;
-      const fieldId = fieldMappings[fieldKey];
+      const payload = {
+        name: camelToFieldName(camelName),
+        value,
+      };
 
-      if (!fieldId) {
-        console.log(`[SKIP] Field ${fieldName} → ${fieldKey} not found in fieldMappings.`);
-        continue;
-      }
+      const url = `https://services.leadconnectorhq.com/locations/${locationId}/customValues/${customValueId}`;
+      console.log(`[PUT] Updating ${payload.name} (${customValueId}) with value: ${value}`);
 
-      console.log(`[PUT] Updating ${fieldName} (${fieldId}) with value: ${value}`);
-
-      try {
-        const putResponse = await axios.put(
-          `https://services.leadconnectorhq.com/locations/${locationId}/customValues/${fieldId}`,
-          {
-            name: fieldName, // Este nombre debe ser el visible en GHL, pero si el API acepta, usamos el camelCase
-            value,
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              Version: "2021-07-28",
-            },
-          }
-        );
-
-        putResults.push({ fieldName, fieldId, status: "ok" });
-      } catch (putErr) {
-        console.error(`[PUT] ❌ Error updating ${fieldName}:`, putErr?.response?.data || putErr.message);
-        putResults.push({ fieldName, fieldId, status: "error", error: putErr?.response?.data || putErr.message });
-      }
+      await axios.put(url, payload, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Version: "2021-07-28",
+        },
+      });
     }
 
-    res.status(200).json({
-      message: "Field update process complete.",
-      results: putResults,
-    });
+    res.status(200).json({ message: "✅ All custom values updated successfully." });
   } catch (err) {
-    console.error("[API] ❌ General error:", err?.response?.data || err.message);
+    console.error("[API] ❌ Error:", err?.response?.data || err.message);
     res.status(500).json({
       error: err?.response?.data || err.message,
     });
