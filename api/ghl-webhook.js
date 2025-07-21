@@ -16,10 +16,10 @@ module.exports = async (req, res) => {
         receivedAt: new Date(),
       });
 
-      return res.sendStatus(200);
+      return res.status(200).end();
     } catch (err) {
       console.error("❌ Error saving locationId to DB:", err.message);
-      return res.status(500).send("Failed to store locationId");
+      return res.status(500).end("Failed to store locationId");
     }
   }
 
@@ -32,13 +32,13 @@ module.exports = async (req, res) => {
         type,
       });
 
-      return res.sendStatus(200);
+      return res.status(200).end();
     } catch (err) {
       console.error("❌ Failed to forward UNINSTALL webhook:", err?.response?.data || err.message);
-      return res.status(500).send("Failed to forward UNINSTALL webhook");
+      return res.status(500).end("Failed to forward UNINSTALL webhook");
     }
   }
 
   console.log("ℹ️ Ignored webhook type:", type);
-  res.sendStatus(200);
+  res.status(200).end();
 };
