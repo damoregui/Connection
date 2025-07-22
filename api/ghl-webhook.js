@@ -34,8 +34,6 @@ module.exports = async (req, res) => {
     if (type === "UNINSTALL") {
       console.log("📤 Received UNINSTALL webhook. LocationId:", locationId);
 
-      // ❌ Eliminado el envío individual con locationId + type
-
       // 1. Remove from customMenuInstalls
       await db.collection("customMenuInstalls").deleteOne({ locationId });
     }
@@ -49,10 +47,34 @@ module.exports = async (req, res) => {
 
     const locationIds = all.map(doc => doc.locationId);
 
-    // 4. POST array to inbound webhook
-    await axios.post(process.env.GHL_WEBHOOK_URL, {
-      locations: locationIds,
-    });
+    // 4. PUT updated list directly to GHL Custom Menu endpoint
+    await axios.put(
+      "https://services.leadconnectorhq.com/custom-menus/42e1a24e-67a1-486f-9044-8125b2b97ef7",
+      {
+        title: "LH360 Configuration",
+        url: "https://www.insuranceatyourfingertips.com/account-configuration-lh360/",
+        icon: {
+          name: "wrench",
+          fontFamily: "fab",
+        },
+        showOnCompany: true,
+        showOnLocation: true,
+        showToAllLocations: false,
+        openMode: "iframe",
+        locations: locationIds,
+        userRole: "all",
+        allowCamera: false,
+        allowMicrophone: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GHL_API_TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Version: "2021-07-28",
+        },
+      }
+    );
 
     return res.status(200).end();
   } catch (err) {
