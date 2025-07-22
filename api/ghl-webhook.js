@@ -34,6 +34,8 @@ module.exports = async (req, res) => {
     if (type === "UNINSTALL") {
       console.log("📤 Received UNINSTALL webhook. LocationId:", locationId);
 
+      // ❌ Eliminado el envío individual con locationId + type
+
       // 1. Remove from customMenuInstalls
       await db.collection("customMenuInstalls").deleteOne({ locationId });
     }
