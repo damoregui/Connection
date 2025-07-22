@@ -76,11 +76,11 @@ module.exports = async (req, res) => {
       { upsert: true }
     );
 
-    await axios.post(process.env.GHL_WEBHOOK_URL, {
-      locationId,
-      access_token,
-      refresh_token,
-    });
+    // await axios.post(process.env.GHL_WEBHOOK_URL, {
+    //   locationId,
+    //   access_token,
+    //   refresh_token,
+    // });
 
     // Cleanup the used pending install
     await db.collection("pendingInstalls").deleteMany({ locationId });
