@@ -51,7 +51,7 @@ module.exports = async (req, res) => {
         url: "https://www.insuranceatyourfingertips.com/account-configuration-lh360/",
         icon: {
           name: "wrench",
-          fontFamily: "fab",
+          fontFamily: "fas",
         },
         showOnCompany: true,
         showOnLocation: true,
