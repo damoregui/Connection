@@ -48,7 +48,7 @@ module.exports = async (req, res) => {
       "https://services.leadconnectorhq.com/custom-menus/42e1a24e-67a1-486f-9044-8125b2b97ef7",
       {
         title: "LH360 Configuration",
-        url: "https://www.insuranceatyourfingertips.com/account-configuration-lh360/",
+        url: "https://www.insuranceatyourfingertips.com/account-configuration-lh360?locationId={{location.id}}",
         icon: {
           name: "wrench",
           fontFamily: "fas",
