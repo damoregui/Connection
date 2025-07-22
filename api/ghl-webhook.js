@@ -17,13 +17,11 @@ module.exports = async (req, res) => {
     if (type === "INSTALL") {
       console.log("📥 Received INSTALL webhook. LocationId:", locationId);
 
-      // 1. Save to pendingInstalls
       await db.collection("pendingInstalls").insertOne({
         locationId,
         receivedAt: new Date(),
       });
 
-      // 2. Add to customMenuInstalls
       await db.collection("customMenuInstalls").updateOne(
         { locationId },
         { $set: { locationId, updatedAt: new Date() } },
@@ -34,11 +32,9 @@ module.exports = async (req, res) => {
     if (type === "UNINSTALL") {
       console.log("📤 Received UNINSTALL webhook. LocationId:", locationId);
 
-      // 1. Remove from customMenuInstalls
       await db.collection("customMenuInstalls").deleteOne({ locationId });
     }
 
-    // 3. Rebuild updated list
     const all = await db
       .collection("customMenuInstalls")
       .find({})
@@ -46,9 +42,9 @@ module.exports = async (req, res) => {
       .toArray();
 
     const locationIds = all.map(doc => doc.locationId);
+    console.log("📦 Sending updated locations to GHL:", locationIds);
 
-    // 4. PUT updated list directly to GHL Custom Menu endpoint
-    await axios.put(
+    const response = await axios.put(
       "https://services.leadconnectorhq.com/custom-menus/42e1a24e-67a1-486f-9044-8125b2b97ef7",
       {
         title: "LH360 Configuration",
@@ -76,9 +72,15 @@ module.exports = async (req, res) => {
       }
     );
 
+    console.log("✅ GHL PUT response status:", response.status);
+    console.log("✅ GHL PUT response data:", response.data);
+
     return res.status(200).end();
   } catch (err) {
-    console.error(`❌ ${type} error:`, err?.response?.data || err.message);
+    console.error("❌ Error during GHL PUT:");
+    console.error("↳ status:", err?.response?.status);
+    console.error("↳ data:", err?.response?.data);
+    console.error("↳ headers:", err?.response?.headers);
     return res.status(500).end(`Failed during ${type}`);
   }
 };
