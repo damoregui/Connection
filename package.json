@@ -17,6 +17,7 @@
     "express": "^5.1.0",
     "micro": "^10.0.1",
     "mongodb": "^6.17.0",
+    "nodemailer": "^7.0.5",
     "querystring": "^0.2.1"
   }
 }

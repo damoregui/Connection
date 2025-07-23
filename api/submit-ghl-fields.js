@@ -76,9 +76,18 @@ module.exports = async (req, res) => {
       }
     }
 
-    res.status(200).json({ ok: true, results });
+    const failed = results.filter(r => !r.success);
+    if (failed.length === 0) {
+      return res.status(200).json({ success: true });
+    } else {
+      const failedFields = failed.map(f => f.fieldName);
+      return res.status(207).json({
+        success: false,
+        failedFields
+      });
+    }
   } catch (err) {
     console.error("❌ General error:", err.message);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
