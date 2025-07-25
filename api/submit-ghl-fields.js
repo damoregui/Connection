@@ -1,5 +1,6 @@
 const { buffer } = require("micro");
 const axios = require("axios");
+const nodemailer = require("nodemailer");
 const { connectMongo } = require("../lib/mongo");
 const { decrypt } = require("../lib/encrypt");
 
@@ -12,6 +13,45 @@ function snakeToFieldName(str) {
     .split("_")
     .map(s => s.charAt(0).toUpperCase() + s.slice(1))
     .join(" ");
+}
+
+async function sendFormEmail({ locationId, updates }) {
+  const transporter = nodemailer.createTransport({
+    host: "smtp.office365.com",
+    port: 587,
+    secure: false, // TLS
+    auth: {
+      user: process.env.NOTIFY_EMAIL,
+      pass: process.env.NOTIFY_EMAIL_PASS
+    }
+  });
+
+  const recipients = [
+    "guido.damore@hotmail.com"
+  ];
+
+  const formattedFields = updates
+    .map(({ fieldName, value }) => `<strong>${fieldName}:</strong> ${value}`)
+    .join("<br>");
+
+  const mailOptions = {
+    from: `"Formulario GHL" <${process.env.NOTIFY_EMAIL}>`,
+    to: recipients.join(","),
+    subject: `📝 Nuevo envío de formulario - Location ID: ${locationId}`,
+    html: `
+      <p>Se recibió un nuevo envío con los siguientes datos:</p>
+      <p><strong>Location ID:</strong> ${locationId}</p>
+      <hr>
+      ${formattedFields}
+    `
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log("✅ Email enviado correctamente");
+  } catch (error) {
+    console.error("❌ Error al enviar el email:", error);
+  }
 }
 
 module.exports = async (req, res) => {
@@ -36,6 +76,9 @@ module.exports = async (req, res) => {
     if (!account) {
       return res.status(404).json({ error: "Account not found" });
     }
+
+    // 🔔 Enviar backup por email antes de procesar
+    await sendFormEmail({ locationId, updates });
 
     const accessToken = decrypt(account.accessTokenEncrypted);
     const fieldMappings = account.fieldMappings;
