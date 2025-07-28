@@ -42,8 +42,8 @@ async function ensureValidAccessToken(locationId) {
       const response = await axios.post(
         "https://services.leadconnectorhq.com/oauth/token",
         qs.stringify({
-          client_id: clientId || process.env.GHL_CLIENT_ID,
-          client_secret: clientSecret || process.env.GHL_CLIENT_SECRET,
+          client_id: process.env.GHL_CLIENT_ID,
+          client_secret: process.env.GHL_CLIENT_SECRET,
           grant_type: "refresh_token",
           refresh_token: refreshToken,
           user_type: "Company",
