@@ -2,7 +2,7 @@ const { buffer } = require("micro");
 const axios = require("axios");
 const nodemailer = require("nodemailer");
 const { connectMongo } = require("../lib/mongo");
-const { decrypt } = require("../lib/encrypt");
+const ensureValidAccessToken = require("../auth/ensureValidAccessToken");
 
 function camelToSnake(str) {
   return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
@@ -19,7 +19,7 @@ async function sendFormEmail({ locationId, updates }) {
   const transporter = nodemailer.createTransport({
     host: "smtp.office365.com",
     port: 587,
-    secure: false, // TLS
+    secure: false,
     auth: {
       user: process.env.NOTIFY_EMAIL,
       pass: process.env.NOTIFY_EMAIL_PASS
@@ -80,7 +80,8 @@ module.exports = async (req, res) => {
     // 🔔 Enviar backup por email antes de procesar
     await sendFormEmail({ locationId, updates });
 
-    const accessToken = decrypt(account.accessTokenEncrypted);
+    // ✅ Obtener token válido y actualizado
+    const accessToken = await ensureValidAccessToken(locationId);
     const fieldMappings = account.fieldMappings;
 
     const results = [];
