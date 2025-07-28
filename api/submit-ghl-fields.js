@@ -19,8 +19,8 @@ async function sendFormEmail({ locationId, updates }) {
   const transporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
-      user: process.env.NOTIFY_EMAIL,           // ejemplo: tuemail@gmail.com
-      pass: process.env.NOTIFY_EMAIL_PASS       // App password de 16 dígitos
+      user: process.env.NOTIFY_EMAIL,
+      pass: process.env.NOTIFY_EMAIL_PASS       
     }
   });
 
@@ -31,11 +31,11 @@ async function sendFormEmail({ locationId, updates }) {
     .join("<br>");
 
   const mailOptions = {
-    from: `"Formulario GHL" <${process.env.NOTIFY_EMAIL}>`,
+    from: `"GHL Form" <${process.env.NOTIFY_EMAIL}>`,
     to: recipients.join(","),
-    subject: `📝 Nuevo envío de formulario - Location ID: ${locationId}`,
+    subject: `📝 New form submission - Location ID: ${locationId}`,
     html: `
-      <p>Se recibió un nuevo envío con los siguientes datos:</p>
+      <p>A new form submission was received with the following data:</p>
       <p><strong>Location ID:</strong> ${locationId}</p>
       <hr>
       ${formattedFields}
@@ -44,9 +44,9 @@ async function sendFormEmail({ locationId, updates }) {
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log("✅ Email enviado correctamente");
+    console.log("✅ Email sent successfully");
   } catch (error) {
-    console.error("❌ Error al enviar el email:", error);
+    console.error("❌ Failed to send email:", error);
   }
 }
 
@@ -73,7 +73,7 @@ module.exports = async (req, res) => {
       return res.status(404).json({ error: "Account not found" });
     }
 
-    // 📨 Backup por email
+    // 📨 Email backup
     await sendFormEmail({ locationId, updates });
 
     const accessToken = await ensureValidAccessToken(locationId);
